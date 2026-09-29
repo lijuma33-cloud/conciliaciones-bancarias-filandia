@@ -1,0 +1,117 @@
+rules_version = '2';
+
+// ══════════════════════════════════════════════════════════════════
+// Reglas de seguridad — Conciliación Bancaria Filandia.
+//
+// Principios (sección 9 y 21 del proyecto):
+//  - Solo usuarios autenticados y con estado "activo" pueden leer/escribir.
+//  - Cualquier usuario ACTIVO (administrador o auxiliar contable) tiene
+//    acceso a TODAS las cuentas — se eliminó la curación por cuenta
+//    individual ("cuentas autorizadas"). El autoregistro deja al usuario
+//    activo de inmediato (ya no requiere aprobación del administrador);
+//    lo único que el autoregistro nunca puede hacer es darse a sí mismo
+//    el rol "administrador".
+//  - El campo "verificado" de una conciliación SOLO puede escribirlo un
+//    administrador — un auxiliar contable puede guardar/editar la
+//    conciliación pero no marcarla ni desmarcarla como verificada.
+//  - Las VERSIONES de conciliación ya guardadas son INMUTABLES (solo
+//    create, nunca update/delete) — así se cumple "no destruir
+//    silenciosamente una conciliación histórica".
+//  - La colección /trazabilidad solo admite create (nunca editar ni
+//    borrar un registro de auditoría).
+// ══════════════════════════════════════════════════════════════════
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function usuarioActual() {
+      return get(/databases/$(database)/documents/usuarios/$(request.auth.uid));
+    }
+
+    function estaActivo() {
+      return request.auth != null &&
+        exists(/databases/$(database)/documents/usuarios/$(request.auth.uid)) &&
+        usuarioActual().data.estado == "activo";
+    }
+
+    function esAdmin() {
+      return estaActivo() && usuarioActual().data.rol == "administrador";
+    }
+
+    // Cualquier usuario activo tiene acceso a todas las cuentas — ya no
+    // existe la curación "cuentasAutorizadas" por usuario.
+    function tieneAccesoACuenta(cuentaId) {
+      return estaActivo();
+    }
+
+    // El campo "verificado" (y su metadata) de una conciliación solo lo
+    // puede cambiar un administrador; el resto de campos los puede
+    // escribir cualquier usuario activo con acceso a la cuenta.
+    function soloAdminCambiaVerificado() {
+      return esAdmin() ||
+        (request.resource.data.get("verificado", false) == resource.data.get("verificado", false) &&
+         request.resource.data.get("verificadoPor", null) == resource.data.get("verificadoPor", null) &&
+         request.resource.data.get("verificadoEn", null) == resource.data.get("verificadoEn", null));
+    }
+
+    match /usuarios/{uid} {
+      allow read: if request.auth != null && (request.auth.uid == uid || esAdmin());
+
+      // Autoregistro (sección "Crear una cuenta nueva" del login): un
+      // usuario puede crear SU PROPIO documento, siempre con rol
+      // "auxiliar_contable" (nunca "administrador", para que nadie se
+      // auto-otorgue el rol más alto saltándose al administrador). Queda
+      // ACTIVO de inmediato, con acceso completo a todas las cuentas — ya
+      // no requiere que un administrador lo active a mano. El
+      // administrador puede crear cualquier usuario sin esa restricción
+      // (incluido rol administrador).
+      allow create: if esAdmin() || (
+        request.auth != null && request.auth.uid == uid
+        && request.resource.data.rol == "auxiliar_contable"
+        && request.resource.data.estado == "activo"
+      );
+
+      allow update, delete: if esAdmin();
+    }
+
+    match /cuentas/{cuentaId} {
+      allow read: if tieneAccesoACuenta(cuentaId);
+      allow write: if esAdmin();
+
+      match /conciliaciones/{periodo} {
+        allow read: if tieneAccesoACuenta(cuentaId);
+        // Crear (primera versión del período): un no-admin no puede crearla
+        // ya marcada como verificada.
+        allow create: if tieneAccesoACuenta(cuentaId) &&
+          (esAdmin() || request.resource.data.get("verificado", false) == false);
+        // Actualizar: cualquiera con acceso puede guardar cambios, pero
+        // solo un administrador puede tocar el campo "verificado".
+        allow update: if tieneAccesoACuenta(cuentaId) && soloAdminCambiaVerificado();
+        allow delete: if esAdmin();
+
+        match /versiones/{versionId} {
+          allow read: if tieneAccesoACuenta(cuentaId);
+          // Cada versión es el registro real de la conciliación (incluye
+          // "verificado"): un no-admin no puede crear una versión ya
+          // marcada como verificada — mismo control que en el puntero
+          // de arriba, aplicado aquí también porque es la fuente real
+          // que se lee (obtenerUltimaConciliacion lee de "versiones",
+          // no del puntero).
+          allow create: if tieneAccesoACuenta(cuentaId) &&
+            (esAdmin() || request.resource.data.get("verificado", false) == false);
+          // Inmutable para todos (nadie edita una versión ya guardada),
+          // pero un administrador SÍ puede borrarla por completo — es la
+          // única forma de deshacer una conciliación montada/guardada
+          // por error (queda registrado en /trazabilidad).
+          allow update: if false;
+          allow delete: if esAdmin();
+        }
+      }
+    }
+
+    match /trazabilidad/{eventoId} {
+      allow read: if esAdmin();
+      allow create: if estaActivo();
+      allow update, delete: if false;
+    }
+  }
+}

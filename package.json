@@ -1,0 +1,30 @@
+{
+  "name": "conciliacion-bancaria-filandia",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc -b && vite build",
+    "preview": "vite preview",
+    "migrar-seguimiento": "esbuild scripts/migrar-seguimiento.ts --bundle --platform=node --outfile=dist_scripts/migrar.cjs --external:xlsx && node dist_scripts/migrar.cjs"
+  },
+  "dependencies": {
+    "firebase": "^12.19.0",
+    "firebase-admin": "^14.4.0",
+    "mammoth": "^1.12.2",
+    "react": "^19.3.0",
+    "react-dom": "^19.3.0",
+    "react-router-dom": "^7.18.3",
+    "tsx": "^4.23.13",
+    "xlsx": "^0.18.5"
+  },
+  "devDependencies": {
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "@vitejs/plugin-react": "^6.1.1",
+    "esbuild": "^0.28.2",
+    "typescript": "^7.0.2",
+    "vite": "^8.2.2"
+  }
+}

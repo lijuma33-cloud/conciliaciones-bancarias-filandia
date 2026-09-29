@@ -1,0 +1,15 @@
+rules_version = '2';
+
+// Archivos originales (extractos/libros cargados) — sección 15:
+// "Los archivos originales cargados por el usuario deben poder
+// almacenarse de manera segura." Estructura:
+//   /archivos-originales/{cuentaId}/{periodo}/{tipo}-{timestamp}.{ext}
+service firebase.storage {
+  match /b/{bucket}/o {
+    match /archivos-originales/{cuentaId}/{allPaths=**} {
+      allow read: if request.auth != null;
+      allow write: if request.auth != null &&
+        request.resource.size < 20 * 1024 * 1024; // 20 MB máx por archivo
+    }
+  }
+}
